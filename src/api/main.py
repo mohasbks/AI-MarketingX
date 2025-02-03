@@ -2,7 +2,21 @@ import sys
 import os
 from pathlib import Path
 import logging
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Request, HTTPException, Security, Depends, Header
+from fastapi.security.api_key import APIKeyHeader, APIKey
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from pydantic import BaseModel
+from typing import List, Optional
+import uvicorn
+from datetime import datetime
+from starlette.status import HTTP_403_FORBIDDEN
+
+from src.models.campaign_optimizer import CampaignOptimizer
 
 # إعدادات TensorFlow للعمل على CPU فقط
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -22,36 +36,7 @@ except:
 project_root = str(Path(__file__).parent.parent.parent)
 sys.path.append(project_root)
 
-from fastapi import FastAPI, HTTPException, Security, Depends, Header
-from fastapi.security.api_key import APIKeyHeader, APIKey
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.openapi.utils import get_openapi
-from pydantic import BaseModel
-from typing import List, Optional
-import uvicorn
-from datetime import datetime
-from starlette.status import HTTP_403_FORBIDDEN
-
-from src.models.campaign_optimizer import CampaignOptimizer
-
-# API Key ثابت للجميع
-API_KEY = "ai-marketing-x-2025-key"
-API_KEY_NAME = "X-API-Key"
-
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if not api_key_header:
-        raise HTTPException(
-            status_code=HTTP_403_FORBIDDEN, detail="API Key header is missing"
-        )
-    if api_key_header != API_KEY:
-        raise HTTPException(
-            status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
-        )
-    return api_key_header
-
+# إعداد FastAPI
 app = FastAPI(
     title="AI-MarketingX API",
     description="API للتحليل الذكي لحملات التسويق",
@@ -59,6 +44,25 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# إعداد القوالب
+templates = Jinja2Templates(directory=os.path.join(project_root, "templates"))
+app.mount("/static", StaticFiles(directory=os.path.join(project_root, "static")), name="static")
+
+# API Key ثابت للجميع
+API_KEY = "ai-marketing-x-2025-key"
+API_KEY_NAME = "X-API-Key"
+
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+# التحقق من مفتاح API
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key == API_KEY:
+        return api_key
+    raise HTTPException(
+        status_code=HTTP_403_FORBIDDEN,
+        detail="مفتاح API غير صالح"
+    )
 
 # إعداد CORS للسماح بالوصول من أي موقع
 app.add_middleware(
@@ -124,11 +128,68 @@ class OptimizationResponse(BaseModel):
     best_times: Optional[List[dict]]
     confidence_score: Optional[float]
 
+class AnalysisResponse(BaseModel):
+    campaign_id: str
+    analysis_result: dict
+    timestamp: datetime
+
+class GenerationResponse(BaseModel):
+    campaign_id: str
+    generated_text: str
+    timestamp: datetime
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    """الصفحة الرئيسية"""
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/api")
+async def api_info():
+    """معلومات عن API"""
+    return {
+        "name": "AI Marketing X API",
+        "version": "1.0.0",
+        "description": "واجهة برمجة التطبيقات للتسويق الذكي",
+        "endpoints": {
+            "/": "الصفحة الرئيسية",
+            "/api": "معلومات API",
+            "/docs": "توثيق Swagger",
+            "/redoc": "توثيق ReDoc",
+            "/analyze": "تحليل النص التسويقي",
+            "/optimize": "تحسين النص التسويقي",
+            "/generate": "توليد نص تسويقي"
+        }
+    }
+
+@app.post("/api/v1/analyze", response_model=AnalysisResponse)
+async def analyze_campaign(
+    campaign: CampaignData,
+    api_key: str = Security(verify_api_key)
+):
+    """تحليل النص التسويقي"""
+    try:
+        result = optimizer.analyze_text(
+            text=campaign.campaign_description,
+            language="ar"
+        )
+        return AnalysisResponse(
+            campaign_id=campaign.campaign_id,
+            analysis_result=result,
+            timestamp=datetime.now()
+        )
+    except Exception as e:
+        logging.error(f"خطأ في تحليل النص: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"خطأ في تحليل النص: {str(e)}"
+        )
+
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_campaign(
     campaign: CampaignData,
-    api_key: APIKey = Depends(get_api_key)
+    api_key: str = Security(verify_api_key)
 ):
+    """تحسين النص التسويقي"""
     try:
         # إنشاء بيانات إضافية مشتقة
         derived_metrics = {
@@ -182,7 +243,35 @@ async def optimize_campaign(
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"خطأ في تحسين النص: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"خطأ في تحسين النص: {str(e)}"
+        )
+
+@app.post("/api/v1/generate", response_model=GenerationResponse)
+async def generate_content(
+    campaign: CampaignData,
+    api_key: str = Security(verify_api_key)
+):
+    """توليد نص تسويقي"""
+    try:
+        result = optimizer.generate_text(
+            topic=campaign.campaign_name,
+            content_type="text",
+            language="ar"
+        )
+        return GenerationResponse(
+            campaign_id=campaign.campaign_id,
+            generated_text=result,
+            timestamp=datetime.now()
+        )
+    except Exception as e:
+        logging.error(f"خطأ في توليد النص: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"خطأ في توليد النص: {str(e)}"
+        )
 
 def _get_market_segment(daily_spend: float, conversion_rate: float) -> str:
     """تحديد شريحة السوق بناءً على الإنفاق ومعدل التحويل"""
@@ -194,7 +283,7 @@ def _get_market_segment(daily_spend: float, conversion_rate: float) -> str:
         return 'small_business'
 
 @app.get("/api/v1/health")
-async def health_check(api_key: APIKey = Depends(get_api_key)):
+async def health_check(api_key: str = Security(verify_api_key)):
     """فحص حالة الخادم"""
     return {
         "status": "healthy",
