@@ -2,7 +2,21 @@ import sys
 import os
 from pathlib import Path
 import logging
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Request, HTTPException, Security, Depends, Header
+from fastapi.security.api_key import APIKeyHeader, APIKey
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from pydantic import BaseModel
+from typing import List, Optional
+import uvicorn
+from datetime import datetime
+from starlette.status import HTTP_403_FORBIDDEN
+
+from src.models.campaign_optimizer import CampaignOptimizer
 
 # إعدادات TensorFlow للعمل على CPU فقط
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -22,18 +36,18 @@ except:
 project_root = str(Path(__file__).parent.parent.parent)
 sys.path.append(project_root)
 
-from fastapi import FastAPI, HTTPException, Security, Depends, Header
-from fastapi.security.api_key import APIKeyHeader, APIKey
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.openapi.utils import get_openapi
-from pydantic import BaseModel
-from typing import List, Optional
-import uvicorn
-from datetime import datetime
-from starlette.status import HTTP_403_FORBIDDEN
+# إعداد FastAPI
+app = FastAPI(
+    title="AI-MarketingX API",
+    description="API للتحليل الذكي لحملات التسويق",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-from src.models.campaign_optimizer import CampaignOptimizer
+# إعداد القوالب
+templates = Jinja2Templates(directory=os.path.join(project_root, "templates"))
+app.mount("/static", StaticFiles(directory=os.path.join(project_root, "static")), name="static")
 
 # API Key ثابت للجميع
 API_KEY = "ai-marketing-x-2025-key"
@@ -51,14 +65,6 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
             status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
         )
     return api_key_header
-
-app = FastAPI(
-    title="AI-MarketingX API",
-    description="API للتحليل الذكي لحملات التسويق",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
 
 # إعداد CORS للسماح بالوصول من أي موقع
 app.add_middleware(
@@ -123,6 +129,29 @@ class OptimizationResponse(BaseModel):
     timestamp: datetime
     best_times: Optional[List[dict]]
     confidence_score: Optional[float]
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    """الصفحة الرئيسية"""
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/api")
+async def api_info():
+    """معلومات عن API"""
+    return {
+        "name": "AI Marketing X API",
+        "version": "1.0.0",
+        "description": "واجهة برمجة التطبيقات للتسويق الذكي",
+        "endpoints": {
+            "/": "الصفحة الرئيسية",
+            "/api": "معلومات API",
+            "/docs": "توثيق Swagger",
+            "/redoc": "توثيق ReDoc",
+            "/analyze": "تحليل النص التسويقي",
+            "/optimize": "تحسين النص التسويقي",
+            "/generate": "توليد نص تسويقي"
+        }
+    }
 
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_campaign(
