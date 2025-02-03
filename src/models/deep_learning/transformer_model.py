@@ -4,6 +4,9 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 import logging
 
+# إعدادات للعمل على CPU
+tf.config.set_visible_devices([], 'GPU')
+
 class MultiHeadSelfAttention(layers.Layer):
     def __init__(self, embed_dim: int, num_heads: int):
         super().__init__()
@@ -11,10 +14,11 @@ class MultiHeadSelfAttention(layers.Layer):
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         
-        self.query = layers.Dense(embed_dim)
-        self.key = layers.Dense(embed_dim)
-        self.value = layers.Dense(embed_dim)
-        self.combine = layers.Dense(embed_dim)
+        # تقليل حجم النموذج للعمل بكفاءة على CPU
+        self.query = layers.Dense(embed_dim // 2)
+        self.key = layers.Dense(embed_dim // 2)
+        self.value = layers.Dense(embed_dim // 2)
+        self.combine = layers.Dense(embed_dim // 2)
         
     def call(self, inputs: tf.Tensor) -> tf.Tensor:
         batch_size = tf.shape(inputs)[0]
@@ -42,7 +46,7 @@ class MultiHeadSelfAttention(layers.Layer):
         # Apply attention to values
         output = tf.matmul(attention_weights, value)
         output = tf.transpose(output, perm=[0, 2, 1, 3])
-        output = tf.reshape(output, (batch_size, -1, self.embed_dim))
+        output = tf.reshape(output, (batch_size, -1, self.embed_dim // 2))
         
         return self.combine(output)
 
@@ -52,7 +56,7 @@ class TransformerBlock(layers.Layer):
         self.attention = MultiHeadSelfAttention(embed_dim, num_heads)
         self.ffn = models.Sequential([
             layers.Dense(ff_dim, activation="relu"),
-            layers.Dense(embed_dim),
+            layers.Dense(embed_dim // 2),
         ])
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
@@ -100,7 +104,7 @@ class AdvancedMarketingTransformer:
         inputs = layers.Input(shape=(None, self.input_dim))
         
         # Input embedding
-        x = layers.Dense(embed_dim)(inputs)
+        x = layers.Dense(embed_dim // 2)(inputs)
         
         # Transformer blocks
         for _ in range(num_layers):

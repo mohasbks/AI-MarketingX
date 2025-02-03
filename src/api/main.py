@@ -1,6 +1,15 @@
 import sys
 import os
 from pathlib import Path
+import logging
+from fastapi.responses import JSONResponse
+
+# إعدادات TensorFlow للعمل على CPU فقط
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+import tensorflow as tf
+tf.config.set_visible_devices([], 'GPU')
 
 # Add the project root directory to Python path
 project_root = str(Path(__file__).parent.parent.parent)
@@ -186,5 +195,41 @@ async def health_check(api_key: APIKey = Depends(get_api_key)):
         "version": "1.0.0"
     }
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    error_msg = f"حدث خطأ غير متوقع: {str(exc)}"
+    logging.error(error_msg)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": error_msg}
+    )
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        # تهيئة النماذج
+        optimizer._initialize_models()
+        logging.info("تم تهيئة النماذج بنجاح")
+    except Exception as e:
+        logging.error(f"خطأ في تهيئة النماذج: {str(e)}")
+        # استمرار التشغيل مع النماذج البسيطة
+        pass
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    # إعداد logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # تشغيل التطبيق
+    try:
+        port = int(os.getenv("PORT", 8000))
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info"
+        )
+    except Exception as e:
+        logging.error(f"خطأ في تشغيل التطبيق: {str(e)}")
