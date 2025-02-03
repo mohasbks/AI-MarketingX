@@ -7,9 +7,16 @@ from fastapi.responses import JSONResponse
 # إعدادات TensorFlow للعمل على CPU فقط
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # تقليل رسائل TensorFlow
 
 import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU')
+# تعطيل GPU بشكل كامل
+physical_devices = tf.config.list_physical_devices('GPU')
+try:
+    for device in physical_devices:
+        tf.config.experimental.set_memory_growth(device, True)
+except:
+    pass
 
 # Add the project root directory to Python path
 project_root = str(Path(__file__).parent.parent.parent)
@@ -207,6 +214,12 @@ async def global_exception_handler(request, exc):
 @app.on_event("startup")
 async def startup_event():
     try:
+        # إعداد logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        
         # تهيئة النماذج
         optimizer._initialize_models()
         logging.info("تم تهيئة النماذج بنجاح")
@@ -216,20 +229,20 @@ async def startup_event():
         pass
 
 if __name__ == "__main__":
-    # إعداد logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    
     # تشغيل التطبيق
     try:
         port = int(os.getenv("PORT", 8000))
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
+        host = os.getenv("HOST", "0.0.0.0")
+        
+        # إعداد uvicorn بشكل صحيح
+        config = uvicorn.Config(
+            app=app,
+            host=host,
             port=port,
-            log_level="info"
+            log_level="info",
+            workers=1
         )
+        server = uvicorn.Server(config)
+        server.run()
     except Exception as e:
         logging.error(f"خطأ في تشغيل التطبيق: {str(e)}")
