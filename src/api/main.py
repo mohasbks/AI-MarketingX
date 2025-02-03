@@ -59,6 +59,10 @@ optimizer = CampaignOptimizer()
 # تعريف نماذج البيانات
 class CampaignData(BaseModel):
     campaign_id: str
+    campaign_name: str
+    campaign_description: str
+    campaign_objectives: List[str]
+    target_audience_description: str
     daily_spend: float
     clicks: int
     impressions: int
@@ -78,6 +82,10 @@ class CampaignData(BaseModel):
         schema_extra = {
             "example": {
                 "campaign_id": "test_campaign_1",
+                "campaign_name": "Test Campaign",
+                "campaign_description": "This is a test campaign",
+                "campaign_objectives": ["increase brand awareness", "drive sales"],
+                "target_audience_description": "People aged 25-34 interested in technology and marketing",
                 "daily_spend": 100,
                 "clicks": 500,
                 "impressions": 10000,
@@ -100,37 +108,74 @@ class OptimizationResponse(BaseModel):
     best_times: Optional[List[dict]]
     confidence_score: Optional[float]
 
-@app.post("/api/v1/optimize", response_model=OptimizationResponse, 
-          description="تحليل وتحسين حملة تسويقية")
+@app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_campaign(
     campaign: CampaignData,
     api_key: APIKey = Depends(get_api_key)
 ):
     try:
-        results = optimizer.get_recommendations({
-            'daily_spend': campaign.daily_spend,
-            'clicks': campaign.clicks,
-            'impressions': campaign.impressions,
-            'conversion_rate': campaign.conversion_rate,
-            'avg_session_duration': campaign.avg_session_duration,
-            'bounce_rate': campaign.bounce_rate,
-            'avg_ctr': campaign.avg_ctr,
-            'engagement_rate': campaign.engagement_rate,
-            'avg_engagement': campaign.avg_engagement,
-            'day_of_week': campaign.day_of_week,
-            'season': campaign.season
-        })
+        # إنشاء بيانات إضافية مشتقة
+        derived_metrics = {
+            'ctr': campaign.clicks / max(campaign.impressions, 1),
+            'cost_per_click': campaign.daily_spend / max(campaign.clicks, 1),
+            'cost_per_conversion': campaign.daily_spend / max(campaign.clicks * campaign.conversion_rate, 1)
+        }
+        
+        # تحليل الأهداف
+        objective_weights = {
+            'زيادة الوعي بالعلامة التجارية': 0.2,
+            'جمع العملاء المحتملين': 0.3,
+            'زيادة المبيعات': 0.4,
+            'زيادة التفاعل': 0.2,
+            'زيادة زيارات الموقع': 0.1
+        }
+        
+        campaign_priority = sum(objective_weights[obj] for obj in campaign.campaign_objectives)
+        
+        # تحليل وصف الجمهور
+        audience_keywords = set(campaign.target_audience_description.lower().split())
+        important_keywords = {
+            'شباب', 'طلاب', 'مهنيون', 'رجال أعمال', 'تقنية', 'تسوق',
+            'رياضة', 'تعليم', 'صحة', 'سفر', 'ترفيه'
+        }
+        audience_matches = audience_keywords.intersection(important_keywords)
+        
+        # تجميع البيانات للتحليل
+        analysis_data = {
+            **campaign.dict(),
+            **derived_metrics,
+            'campaign_priority': campaign_priority,
+            'audience_relevance': len(audience_matches) / len(important_keywords),
+            'market_segment': _get_market_segment(campaign.daily_spend, campaign.conversion_rate)
+        }
+        
+        # الحصول على التوصيات من المحسن
+        recommendations = optimizer.get_recommendations(analysis_data)
+        
+        # تحديث النموذج مع النتائج الفعلية (التعلم المستمر)
+        if hasattr(campaign, 'actual_results'):
+            optimizer.update_models(analysis_data, campaign.actual_results)
         
         return OptimizationResponse(
             campaign_id=campaign.campaign_id,
-            predicted_roi=float(results['predicted_roi']),
-            recommendations=results['recommendations'],
+            predicted_roi=recommendations['predicted_metrics']['roi'],
+            recommendations=recommendations['recommendations'],
             timestamp=datetime.now(),
-            best_times=results.get('best_times', []),
-            confidence_score=results.get('confidence_score', 0.0)
+            best_times=recommendations.get('best_times'),
+            confidence_score=recommendations['model_info']['confidence_score']
         )
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def _get_market_segment(daily_spend: float, conversion_rate: float) -> str:
+    """تحديد شريحة السوق بناءً على الإنفاق ومعدل التحويل"""
+    if daily_spend > 1000:
+        return 'enterprise'
+    elif daily_spend > 100:
+        return 'mid_market'
+    else:
+        return 'small_business'
 
 @app.get("/api/v1/health")
 async def health_check(api_key: APIKey = Depends(get_api_key)):
