@@ -55,14 +55,16 @@ API_KEY_NAME = "X-API-Key"
 
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# التحقق من مفتاح API
-async def verify_api_key(api_key: str = Security(api_key_header)):
-    if api_key == API_KEY:
-        return api_key
-    raise HTTPException(
-        status_code=HTTP_403_FORBIDDEN,
-        detail="مفتاح API غير صالح"
-    )
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if not api_key_header:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN, detail="API Key header is missing"
+        )
+    if api_key_header != API_KEY:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
+        )
+    return api_key_header
 
 # إعداد CORS للسماح بالوصول من أي موقع
 app.add_middleware(
@@ -128,16 +130,6 @@ class OptimizationResponse(BaseModel):
     best_times: Optional[List[dict]]
     confidence_score: Optional[float]
 
-class AnalysisResponse(BaseModel):
-    campaign_id: str
-    analysis_result: dict
-    timestamp: datetime
-
-class GenerationResponse(BaseModel):
-    campaign_id: str
-    generated_text: str
-    timestamp: datetime
-
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     """الصفحة الرئيسية"""
@@ -161,35 +153,11 @@ async def api_info():
         }
     }
 
-@app.post("/api/v1/analyze", response_model=AnalysisResponse)
-async def analyze_campaign(
-    campaign: CampaignData,
-    api_key: str = Security(verify_api_key)
-):
-    """تحليل النص التسويقي"""
-    try:
-        result = optimizer.analyze_text(
-            text=campaign.campaign_description,
-            language="ar"
-        )
-        return AnalysisResponse(
-            campaign_id=campaign.campaign_id,
-            analysis_result=result,
-            timestamp=datetime.now()
-        )
-    except Exception as e:
-        logging.error(f"خطأ في تحليل النص: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"خطأ في تحليل النص: {str(e)}"
-        )
-
 @app.post("/api/v1/optimize", response_model=OptimizationResponse)
 async def optimize_campaign(
     campaign: CampaignData,
-    api_key: str = Security(verify_api_key)
+    api_key: APIKey = Depends(get_api_key)
 ):
-    """تحسين النص التسويقي"""
     try:
         # إنشاء بيانات إضافية مشتقة
         derived_metrics = {
@@ -243,35 +211,7 @@ async def optimize_campaign(
         )
         
     except Exception as e:
-        logging.error(f"خطأ في تحسين النص: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"خطأ في تحسين النص: {str(e)}"
-        )
-
-@app.post("/api/v1/generate", response_model=GenerationResponse)
-async def generate_content(
-    campaign: CampaignData,
-    api_key: str = Security(verify_api_key)
-):
-    """توليد نص تسويقي"""
-    try:
-        result = optimizer.generate_text(
-            topic=campaign.campaign_name,
-            content_type="text",
-            language="ar"
-        )
-        return GenerationResponse(
-            campaign_id=campaign.campaign_id,
-            generated_text=result,
-            timestamp=datetime.now()
-        )
-    except Exception as e:
-        logging.error(f"خطأ في توليد النص: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"خطأ في توليد النص: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 def _get_market_segment(daily_spend: float, conversion_rate: float) -> str:
     """تحديد شريحة السوق بناءً على الإنفاق ومعدل التحويل"""
@@ -283,7 +223,7 @@ def _get_market_segment(daily_spend: float, conversion_rate: float) -> str:
         return 'small_business'
 
 @app.get("/api/v1/health")
-async def health_check(api_key: str = Security(verify_api_key)):
+async def health_check(api_key: APIKey = Depends(get_api_key)):
     """فحص حالة الخادم"""
     return {
         "status": "healthy",
@@ -299,6 +239,16 @@ async def global_exception_handler(request, exc):
         status_code=500,
         content={"detail": error_msg}
     )
+
+from src.api.marketing_formulas_api import router as formulas_router
+
+# إضافة مسارات الصيغ التسويقية
+app.include_router(
+    formulas_router,
+    prefix="/api/v1/formulas",
+    tags=["Marketing Formulas"],
+    dependencies=[Depends(get_api_key)]
+)
 
 @app.on_event("startup")
 async def startup_event():
