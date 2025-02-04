@@ -1,1 +1,1 @@
-web: gunicorn src.api.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+web: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
